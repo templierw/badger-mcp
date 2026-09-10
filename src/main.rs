@@ -1,5 +1,20 @@
+
 fn main() {
-    println!("Hello, world!");
+    
+    let client = reqwest::blocking::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("should build client");
+
+    let response = client.get("http://127.0.0.1:3876/health").send().expect("bad response");
+
+    match response.status() {
+        reqwest::StatusCode::OK => {
+            println!("Server is healthy");
+            println!("{:}", response.text().expect("should read response text"));
+        },
+        err @_ => println!("{:}", err.as_u16()),
+    }
 }
 
 
