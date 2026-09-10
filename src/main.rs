@@ -15,6 +15,14 @@ fn main() {
         },
         err @_ => println!("{:}", err.as_u16()),
     }
+
+    if let Ok(token) = std::env::var("SPROD_TOKEN") {
+        let response = client.get("http://127.0.0.1:3876/tasks")
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .expect("bad response");
+        println!("{:}", response.text().expect("should read response text"));
+    }
 }
 
 
