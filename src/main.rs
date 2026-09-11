@@ -1,47 +1,62 @@
-
 fn main() {
-    
     let client = reqwest::blocking::Client::builder()
         .no_proxy()
         .build()
         .expect("should build client");
 
-    let response = client.get("http://127.0.0.1:3876/health").send().expect("bad response");
+    let response = client
+        .get("http://127.0.0.1:3876/health")
+        .send()
+        .expect("bad response");
 
     match response.status() {
         reqwest::StatusCode::OK => {
             println!("Server is healthy");
             println!("{:}", response.text().expect("should read response text"));
-        },
-        err @_ => println!("{:}", err.as_u16()),
+        }
+        err => println!("{:}", err.as_u16()),
     }
 
-    if let Ok(token) = std::env::var("SPROD_TOKEN") {
-        let response = client.get("http://127.0.0.1:3876/tasks")
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
-            .expect("bad response");
-        println!("{:}", response.text().expect("should read response text"));
+    let response = client
+        .get("http://127.0.0.1:3876/tasks")
+        .header(
+            "Authorization",
+            format!(
+                "Bearer {}",
+                std::env::var("SPROD_TOKEN").expect("SPROD_TOKEN not set")
+            ),
+        )
+        .send()
+        .expect("bad response");
+    match response.status() {
+        reqwest::StatusCode::OK => {
+            println!("Tasks fetched successfully");
+
+            let body = serde_json::from_str::<Envelope<Vec<Task>>>(
+                &response.text().expect("should read response text"),
+            )
+            .expect("should deserialize");
+
+            println!("{:#?}", body);
+        }
+        err => println!("{:}", err.as_u16()),
     }
 }
 
-
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 pub struct SpError {
     pub code: String,
     pub message: String,
 }
 
-
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 #[serde(untagged)]
 pub enum Envelope<T> {
     Success { data: T },
     Failure { error: SpError },
 }
 
-
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
     pub title: String,
@@ -49,10 +64,9 @@ pub struct Task {
     pub project_id: String,
 }
 
-
 #[cfg(test)]
 mod tests {
-    use crate::{Task, Envelope};
+    use crate::{Envelope, Task};
 
     #[test]
     fn success_envelope_yields_success_variant() {
