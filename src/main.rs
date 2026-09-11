@@ -1,3 +1,5 @@
+use serde::Deserialize;
+
 fn main() {
     let client = reqwest::blocking::Client::builder()
         .no_proxy()
@@ -56,10 +58,23 @@ pub enum Envelope<T> {
     Failure { error: SpError },
 }
 
+fn zero_as_none<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = u64::deserialize(deserializer)?;
+    if value == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(value))
+    }
+}
+
 #[derive(serde::Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
     pub title: String,
+    #[serde(default, deserialize_with = "zero_as_none")]
     pub time_estimate: Option<u64>,
     pub project_id: String,
 }
@@ -130,5 +145,14 @@ mod tests {
             }
             Envelope::Failure { .. } => panic!("success envelope parsed as the failure variant"),
         }
+    }
+
+    #[test]
+    fn a_zero_time_estimate_means_no_estimate() {
+        let json = r#"{"title":"badger","timeEstimate":0,"projectId":"proj_abc"}"#;
+
+        let task: Task = serde_json::from_str(json).expect("should deserialize");
+
+        assert_eq!(task.time_estimate, None);
     }
 }
