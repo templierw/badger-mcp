@@ -1,5 +1,11 @@
 use serde::Deserialize;
 
+#[derive(serde::Serialize, Debug, PartialEq, Eq)]
+pub struct RpcError {
+    pub code: i64,
+    pub message: String,
+}
+
 fn main() {
     let client = reqwest::blocking::Client::builder()
         .no_proxy()
@@ -79,9 +85,95 @@ pub struct Task {
     pub project_id: String,
 }
 
+#[derive(serde::Deserialize, Debug)]
+pub struct Request {
+    pub jsonrpc: String,
+    pub id: Option<Id>,
+    pub method: String,
+    pub params: Option<serde_json::Value>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Debug, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum Id {
+    Number(u64),
+    String(String),
+}
+
+#[derive(serde::Serialize, Debug, PartialEq, Eq)]
+pub struct Response {
+    pub jsonrpc: String,
+    pub id: Id,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<RpcError>,
+}
+
+impl Response {
+    pub fn success(id: Id, result: serde_json::Value) -> Self {
+        Response {
+            jsonrpc: "2.0".to_owned(),
+            id,
+            result: Some(result),
+            error: None,
+        }
+    }
+
+    pub fn error(id: Id, code: i64, message: String) -> Self {
+        Response {
+            jsonrpc: "2.0".to_owned(),
+            id,
+            result: None,
+            error: Some(RpcError { code, message }),
+        }
+    }
+}
+
+#[derive(serde::Serialize, Debug)]
+pub struct ServerInfo {
+    pub name: String,
+    pub version: String,
+}
+
+impl Default for ServerInfo {
+    fn default() -> Self {
+        ServerInfo {
+            name: "badger-mcp".to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+        }
+    }
+}
+
+pub fn handle(req: Request) -> Option<Response> {
+    let id = req.id?;
+    Some(match req.method.as_str() {
+        "initialize" => {
+            let requested_version = req
+                .params
+                .as_ref()
+                .and_then(|params| params["protocolVersion"].as_str());
+            match requested_version {
+                Some(v) => Response::success(
+                    id,
+                    serde_json::json!(
+                        {
+                            "protocolVersion": v,
+                            "capabilities": {"tools": {}},
+                            "serverInfo": ServerInfo::default(),
+                        }
+                    ),
+                ),
+                None => Response::error(id, -32602, "Invalid params".to_owned()),
+            }
+        }
+        _ => Response::error(id, -32601, "Method not found".to_owned()),
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::{Envelope, Task};
+    use crate::{Envelope, Id, Request, Response, RpcError, Task, handle};
 
     #[test]
     fn success_envelope_yields_success_variant() {
@@ -154,5 +246,109 @@ mod tests {
         let task: Task = serde_json::from_str(json).expect("should deserialize");
 
         assert_eq!(task.time_estimate, None);
+    }
+
+    #[test]
+    fn a_request_exposes_its_method() {
+        let json = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+
+        let request: Request = serde_json::from_str(json).expect("should deserialize");
+
+        assert_eq!(request.method, "tools/list");
+    }
+
+    #[test]
+    fn a_notification_has_no_id() {
+        let json = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+
+        let request: Request = serde_json::from_str(json).expect("should deserialize");
+
+        assert_eq!(request.method, "notifications/initialized");
+        assert!(request.id.is_none());
+    }
+
+    #[test]
+    fn an_id_can_be_a_string() {
+        let json = r#"{"jsonrpc":"2.0","id":"init-1","method":"initialize"}"#;
+
+        let request: Request = serde_json::from_str(json).expect("should deserialize");
+
+        assert_eq!(request.method, "initialize");
+        assert_eq!(request.id, Some(Id::String("init-1".to_owned())));
+    }
+
+    #[test]
+    fn a_success_response_echoes_the_id() {
+        let response = Response {
+            jsonrpc: "2.0".to_owned(),
+            id: Id::Number(7),
+            result: Some(serde_json::json!({"tools": []})),
+            error: None,
+        };
+
+        let value = serde_json::to_value(&response).expect("should serialize");
+
+        assert_eq!(value["jsonrpc"], "2.0");
+        assert_eq!(value["id"], 7);
+        assert_eq!(value["result"]["tools"], serde_json::json!([]));
+        assert!(value.get("error").is_none());
+    }
+
+    #[test]
+    fn an_error_response_carries_a_code_and_no_result() {
+        let response = Response {
+            jsonrpc: "2.0".to_owned(),
+            id: Id::Number(7),
+            result: None,
+            error: Some(RpcError {
+                code: -32601,
+                message: "Method not found".to_owned(),
+            }),
+        };
+
+        let value = serde_json::to_value(&response).expect("should serialize");
+
+        assert_eq!(value["error"]["code"], -32601);
+        assert_eq!(value["error"]["message"], "Method not found");
+        assert!(value.get("result").is_none());
+    }
+
+    #[test]
+    fn an_unknown_method_is_a_method_not_found_error() {
+        let request: Request =
+            serde_json::from_str(r#"{"jsonrpc":"2.0","id":7,"method":"badger/dance"}"#)
+                .expect("should deserialize");
+
+        let response = handle(request).expect("a request must get a response");
+
+        assert_eq!(response.id, Id::Number(7));
+
+        let value = serde_json::to_value(&response).expect("should serialize");
+        assert_eq!(value["error"]["code"], -32601);
+        assert_eq!(value["error"]["message"], "Method not found");
+        assert!(value.get("result").is_none());
+    }
+
+    #[test]
+    fn initialize_answers_the_handshake() {
+        let json = r#"{
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "claude-code", "version": "1.0"}
+            }
+        }"#;
+        let request: Request = serde_json::from_str(json).expect("should deserialize");
+
+        let response = handle(request).expect("a request must get a response");
+        let value = serde_json::to_value(&response).expect("should serialize");
+
+        assert!(value.get("error").is_none());
+        assert_eq!(value["result"]["protocolVersion"], "2025-06-18");
+        assert_eq!(value["result"]["serverInfo"]["name"], "badger-mcp");
+        assert!(value["result"]["capabilities"]["tools"].is_object());
     }
 }
