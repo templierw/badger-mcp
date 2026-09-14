@@ -86,6 +86,22 @@ pub fn handle(req: Request) -> Option<Response> {
                 None => Response::error(id, -32602, "Invalid params".to_owned()),
             }
         }
+        "tools/list" => Response::success(
+            id, 
+            serde_json::json!(
+                {
+                    "tools": [
+                        {
+                            "name": "list_tasks",
+                            "description": "Return task titles, time estimates (in min) and project ids. Estimate can be missing.",
+                            "inputSchema": {
+                                "type": "object"
+                            }
+                        }
+                    ]
+                }
+            )
+        ),
         _ => Response::error(id, -32601, "Method not found".to_owned()),
     })
 }

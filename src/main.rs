@@ -1,48 +1,26 @@
-use badger_mcp::sp::{Envelope, Task};
+use std::{eprintln, io::stdin};
+
+use badger_mcp::mcp;
 
 
 fn main() {
-    let client = reqwest::blocking::Client::builder()
-        .no_proxy()
-        .build()
-        .expect("should build client");
+    let lines = stdin().lines();
 
-    let response = client
-        .get("http://127.0.0.1:3876/health")
-        .send()
-        .expect("bad response");
-
-    match response.status() {
-        reqwest::StatusCode::OK => {
-            println!("Server is healthy");
-            println!("{:}", response.text().expect("should read response text"));
+    for line in lines {
+        match line {
+            Ok(content) => {
+                match serde_json::from_str::<mcp::Request>(&content) {
+                    Ok(request) => {
+                        match mcp::handle(request) {
+                            Some(response) => println!("{}", serde_json::to_string(&response).unwrap()),
+                            None => (),
+                        }
+                    },
+                    Err(e) => eprintln!("malformed request {}", e),
+                }
+            },
+            Err(e) => eprintln!("failed to read line {}", e),
         }
-        err => println!("{:}", err.as_u16()),
-    }
-
-    let response = client
-        .get("http://127.0.0.1:3876/tasks")
-        .header(
-            "Authorization",
-            format!(
-                "Bearer {}",
-                std::env::var("SPROD_TOKEN").expect("SPROD_TOKEN not set")
-            ),
-        )
-        .send()
-        .expect("bad response");
-    match response.status() {
-        reqwest::StatusCode::OK => {
-            println!("Tasks fetched successfully");
-
-            let body = serde_json::from_str::<Envelope<Vec<Task>>>(
-                &response.text().expect("should read response text"),
-            )
-            .expect("should deserialize");
-
-            println!("{:#?}", body);
-        }
-        err => println!("{:}", err.as_u16()),
     }
 }
 
