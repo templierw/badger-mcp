@@ -1,3 +1,5 @@
+use crate::sp::Task;
+
 #[derive(serde::Serialize, Debug, PartialEq, Eq)]
 pub struct RpcError {
     pub code: i64,
@@ -87,7 +89,7 @@ pub fn handle(req: Request) -> Option<Response> {
             }
         }
         "tools/list" => Response::success(
-            id, 
+            id,
             serde_json::json!(
                 {
                     "tools": [
@@ -100,15 +102,38 @@ pub fn handle(req: Request) -> Option<Response> {
                         }
                     ]
                 }
-            )
+            ),
         ),
+        "tools/call" => {
+            let name = req
+                .params
+                .as_ref()
+                .and_then(|params| params["name"].as_str());
+            match name {
+                Some(n) => Response::error(id, -32602, format!("Unknown tool: {:}", n)),
+                None => Response::error(id, -32602, "Missing tool name".to_owned()),
+            }
+        }
         _ => Response::error(id, -32601, "Method not found".to_owned()),
     })
 }
 
+pub fn list_tasks_result(tasks: &[Task]) -> serde_json::Value {
+    let text = tasks
+        .iter()
+        .map(|t| match t.time_estimate {
+            Some(value) => format!("{} - {} - {}", t.title, value / 60_000, t.project_id),
+            None => format!("{} - {}", t.title, t.project_id),
+        })
+        .collect::<Vec<String>>()
+        .join("\n");
+    serde_json::json!({ "content": [ {"type": "text", "text": text} ], "isError": false })
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::mcp::{Id, Request, Response, RpcError, handle};
+    use crate::mcp::{Id, Request, Response, RpcError, handle, list_tasks_result};
+    use crate::sp::Task;
 
     #[test]
     fn a_request_exposes_its_method() {
@@ -228,7 +253,11 @@ mod tests {
             .expect("result.tools should be an array");
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], "list_tasks");
-        assert!(tools[0]["description"].as_str().is_some_and(|d| !d.is_empty()));
+        assert!(
+            tools[0]["description"]
+                .as_str()
+                .is_some_and(|d| !d.is_empty())
+        );
         assert_eq!(tools[0]["inputSchema"]["type"], "object");
     }
 
@@ -239,5 +268,63 @@ mod tests {
                 .expect("should deserialize");
 
         assert!(handle(request).is_none());
+    }
+
+    #[test]
+    fn calling_an_unknown_tool_is_an_invalid_params_error() {
+        let json = r#"{
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "no_such_tool", "arguments": {}}
+        }"#;
+        let request: Request = serde_json::from_str(json).expect("should deserialize");
+
+        let response = handle(request).expect("a request must get a response");
+        let value = serde_json::to_value(&response).expect("should serialize");
+
+        assert_eq!(value["error"]["code"], -32602);
+        assert!(
+            value["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("no_such_tool"))
+        );
+        assert!(value.get("result").is_none());
+    }
+
+    #[test]
+    fn list_tasks_result_reports_estimates_in_minutes() {
+        // No digits anywhere in this fixture, so any '0' in the rendered text
+        // means a raw millisecond value leaked or a missing estimate became zero.
+        let tasks = vec![
+            Task {
+                title: "check dynatrace access".to_owned(),
+                time_estimate: Some(900_000),
+                project_id: "proj_abc".to_owned(),
+            },
+            Task {
+                title: "triage inbox".to_owned(),
+                time_estimate: None,
+                project_id: "proj_abc".to_owned(),
+            },
+        ];
+
+        let result = list_tasks_result(&tasks);
+
+        assert_eq!(result["isError"], false);
+
+        let content = result["content"]
+            .as_array()
+            .expect("result.content should be an array");
+        assert_eq!(content.len(), 1);
+        assert_eq!(content[0]["type"], "text");
+
+        let text = content[0]["text"]
+            .as_str()
+            .expect("the content item should carry text");
+        assert!(text.contains("check dynatrace access"));
+        assert!(text.contains("triage inbox"));
+        assert!(text.contains("15"));
+        assert!(!text.contains('0'));
     }
 }

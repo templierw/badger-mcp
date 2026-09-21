@@ -34,7 +34,6 @@ pub struct Task {
     pub project_id: String,
 }
 
-
 #[cfg(test)]
 mod tests {
     use crate::sp::{Envelope, Task};
