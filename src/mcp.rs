@@ -1,4 +1,4 @@
-use crate::sp::Task;
+use crate::sp::{self, Task};
 
 #[derive(serde::Serialize, Debug, PartialEq, Eq)]
 pub struct RpcError {
@@ -66,7 +66,7 @@ impl Default for ServerInfo {
     }
 }
 
-pub fn handle(req: Request) -> Option<Response> {
+pub fn handle(req: Request, client: &sp::SpClient) -> Option<Response> {
     let id = req.id?;
     Some(match req.method.as_str() {
         "initialize" => {
@@ -110,7 +110,22 @@ pub fn handle(req: Request) -> Option<Response> {
                 .as_ref()
                 .and_then(|params| params["name"].as_str());
             match name {
-                Some(n) => Response::error(id, -32602, format!("Unknown tool: {:}", n)),
+                Some(n) => match n {
+                    "list_tasks" => {
+                        let tasks = client.fetch_tasks();
+
+                        match tasks {
+                            Ok(t) => Response::success(id, list_tasks_result(&t)),
+                            Err(e) => Response::success(
+                                id,
+                                serde_json::json!(
+                                    { "content": [ {"type": "text", "text": e} ], "isError": true }
+                                ),
+                            ),
+                        }
+                    }
+                    _ => Response::error(id, -32602, format!("Unknown tool: {:}", n)),
+                },
                 None => Response::error(id, -32602, "Missing tool name".to_owned()),
             }
         }
@@ -133,7 +148,12 @@ pub fn list_tasks_result(tasks: &[Task]) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use crate::mcp::{Id, Request, Response, RpcError, handle, list_tasks_result};
-    use crate::sp::Task;
+    use crate::sp::{SpClient, Task};
+
+    // Protocol tests never reach SP, so this client is built but never used.
+    fn dummy_sp_client() -> SpClient {
+        SpClient::new("not-a-real-token".to_owned())
+    }
 
     #[test]
     fn a_request_exposes_its_method() {
@@ -206,7 +226,7 @@ mod tests {
             serde_json::from_str(r#"{"jsonrpc":"2.0","id":7,"method":"badger/dance"}"#)
                 .expect("should deserialize");
 
-        let response = handle(request).expect("a request must get a response");
+        let response = handle(request, &dummy_sp_client()).expect("a request must get a response");
 
         assert_eq!(response.id, Id::Number(7));
 
@@ -230,7 +250,7 @@ mod tests {
         }"#;
         let request: Request = serde_json::from_str(json).expect("should deserialize");
 
-        let response = handle(request).expect("a request must get a response");
+        let response = handle(request, &dummy_sp_client()).expect("a request must get a response");
         let value = serde_json::to_value(&response).expect("should serialize");
 
         assert!(value.get("error").is_none());
@@ -245,7 +265,7 @@ mod tests {
             serde_json::from_str(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)
                 .expect("should deserialize");
 
-        let response = handle(request).expect("a request must get a response");
+        let response = handle(request, &dummy_sp_client()).expect("a request must get a response");
         let value = serde_json::to_value(&response).expect("should serialize");
 
         let tools = value["result"]["tools"]
@@ -267,7 +287,7 @@ mod tests {
             serde_json::from_str(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
                 .expect("should deserialize");
 
-        assert!(handle(request).is_none());
+        assert!(handle(request, &dummy_sp_client()).is_none());
     }
 
     #[test]
@@ -280,7 +300,7 @@ mod tests {
         }"#;
         let request: Request = serde_json::from_str(json).expect("should deserialize");
 
-        let response = handle(request).expect("a request must get a response");
+        let response = handle(request, &dummy_sp_client()).expect("a request must get a response");
         let value = serde_json::to_value(&response).expect("should serialize");
 
         assert_eq!(value["error"]["code"], -32602);
