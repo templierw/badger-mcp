@@ -34,6 +34,40 @@ pub struct Task {
     pub project_id: String,
 }
 
+pub struct SpClient {
+    client: reqwest::blocking::Client,
+    token: String,
+}
+
+impl SpClient {
+    pub fn new(token: String) -> Self {
+        SpClient {
+            client: reqwest::blocking::Client::builder()
+                .no_proxy()
+                .build()
+                .expect("Failed to build HTTP client"),
+            token,
+        }
+    }
+    pub fn fetch_tasks(&self) -> Result<Vec<Task>, String> {
+        let body = self
+            .client
+            .get("http://127.0.0.1:3876/tasks")
+            .header("Authorization", format!("Bearer {}", self.token))
+            .send()
+            .map_err(|e| e.to_string())?
+            .text()
+            .map_err(|e| e.to_string())?;
+
+        let tasks: Envelope<Vec<Task>> = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+
+        match tasks {
+            Envelope::Success { data } => Ok(data),
+            Envelope::Failure { error } => Err(format!("{}: {}", error.code, error.message)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::sp::{Envelope, Task};
