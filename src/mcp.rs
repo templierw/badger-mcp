@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::sp::{self, Task};
 
 #[derive(serde::Serialize, Debug, PartialEq, Eq)]
@@ -66,6 +68,8 @@ impl Default for ServerInfo {
     }
 }
 
+// Func
+
 pub fn handle(req: Request, client: &sp::SpClient) -> Option<Response> {
     let id = req.id?;
     Some(match req.method.as_str() {
@@ -113,9 +117,16 @@ pub fn handle(req: Request, client: &sp::SpClient) -> Option<Response> {
                 Some(n) => match n {
                     "list_tasks" => {
                         let tasks = client.fetch_tasks();
+                        let projects: HashMap<String, String> = match client.fetch_projects() {
+                            Ok(ps) => ps.into_iter().map(|p| (p.id, p.title)).collect(),
+                            Err(e) => {
+                                eprintln!("{}", e);
+                                HashMap::new()
+                            }
+                        };
 
                         match tasks {
-                            Ok(t) => Response::success(id, list_tasks_result(&t)),
+                            Ok(t) => Response::success(id, list_tasks_result(&t, &projects)),
                             Err(e) => Response::success(
                                 id,
                                 serde_json::json!(
@@ -133,12 +144,23 @@ pub fn handle(req: Request, client: &sp::SpClient) -> Option<Response> {
     })
 }
 
-pub fn list_tasks_result(tasks: &[Task]) -> serde_json::Value {
+pub fn list_tasks_result(tasks: &[Task], projects: &HashMap<String, String>) -> serde_json::Value {
     let text = tasks
         .iter()
-        .map(|t| match t.time_estimate {
-            Some(value) => format!("{} - {} min - project: {}", t.title, value / 60_000, t.project_id),
-            None => format!("{} - project: {}", t.title, t.project_id),
+        .map(|t| {
+            let project_label = match projects.get(&t.project_id) {
+                Some(id) => id,
+                None => &t.project_id,
+            };
+            match t.time_estimate {
+                Some(value) => format!(
+                    "{} - {} min - project: {}",
+                    t.title,
+                    value / 60_000,
+                    project_label
+                ),
+                None => format!("{} - project: {}", t.title, project_label),
+            }
         })
         .collect::<Vec<String>>()
         .join("\n");
@@ -149,6 +171,12 @@ pub fn list_tasks_result(tasks: &[Task]) -> serde_json::Value {
 mod tests {
     use crate::mcp::{Id, Request, Response, RpcError, handle, list_tasks_result};
     use crate::sp::{SpClient, Task};
+    use std::collections::HashMap;
+
+    // Only proj_abc has a name here, so an id outside the map exercises the fallback.
+    fn project_names() -> HashMap<String, String> {
+        HashMap::from([("proj_abc".to_owned(), "tsfm".to_owned())])
+    }
 
     // Protocol tests never reach SP, so this client is built but never used.
     fn dummy_sp_client() -> SpClient {
@@ -329,7 +357,7 @@ mod tests {
             },
         ];
 
-        let result = list_tasks_result(&tasks);
+        let result = list_tasks_result(&tasks, &project_names());
 
         assert_eq!(result["isError"], false);
 
@@ -355,13 +383,31 @@ mod tests {
             .find(|line| line.contains("check dynatrace access"))
             .expect("the estimated task should have its own line");
         assert!(with_estimate.contains("15 min"));
-        assert!(with_estimate.contains("project"));
+        assert!(with_estimate.contains("project: tsfm"));
 
         let without_estimate = lines
             .iter()
             .find(|line| line.contains("triage inbox"))
             .expect("the unestimated task should have its own line");
-        assert!(without_estimate.contains("project"));
+        assert!(without_estimate.contains("project: tsfm"));
         assert!(!without_estimate.contains("min"));
+    }
+
+    #[test]
+    fn an_unknown_project_id_falls_back_to_the_id() {
+        let tasks = vec![Task {
+            title: "orphan task".to_owned(),
+            time_estimate: Some(600_000),
+            project_id: "proj_zzz".to_owned(),
+        }];
+
+        let result = list_tasks_result(&tasks, &project_names());
+
+        assert_eq!(result["isError"], false);
+        let text = result["content"][0]["text"]
+            .as_str()
+            .expect("the content item should carry text");
+        assert!(text.contains("orphan task"));
+        assert!(text.contains("proj_zzz"));
     }
 }

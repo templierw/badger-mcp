@@ -34,6 +34,13 @@ pub struct Task {
     pub project_id: String,
 }
 
+#[derive(serde::Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Project {
+    pub id: String,
+    pub title: String,
+}
+
 pub struct SpClient {
     client: reqwest::blocking::Client,
     token: String,
@@ -66,10 +73,30 @@ impl SpClient {
             Envelope::Failure { error } => Err(format!("{}: {}", error.code, error.message)),
         }
     }
+
+    pub fn fetch_projects(&self) -> Result<Vec<Project>, String> {
+        let body = self
+            .client
+            .get("http://127.0.0.1:3876/projects")
+            .header("Authorization", format!("Bearer {}", self.token))
+            .send()
+            .map_err(|e| e.to_string())?
+            .text()
+            .map_err(|e| e.to_string())?;
+
+        let projects: Envelope<Vec<Project>> =
+            serde_json::from_str(&body).map_err(|e| e.to_string())?;
+
+        match projects {
+            Envelope::Success { data } => Ok(data),
+            Envelope::Failure { error } => Err(format!("{}: {}", error.code, error.message)),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::sp::Project;
     use crate::sp::{Envelope, Task};
 
     #[test]
@@ -143,5 +170,34 @@ mod tests {
         let task: Task = serde_json::from_str(json).expect("should deserialize");
 
         assert_eq!(task.time_estimate, None);
+    }
+
+    #[test]
+    fn a_project_reads_its_id_and_title() {
+        // Shape taken from the live /projects payload, extra fields included.
+        let json = r#"{
+            "ok": true,
+            "data": [
+                {
+                    "id": "3tmJCSBufFhyqys8IjZJL",
+                    "title": "tsfm",
+                    "isArchived": false,
+                    "isHiddenFromMenu": false,
+                    "taskIds": ["a", "b"],
+                    "advancedCfg": {"worklogExportSettings": {"cols": ["DATE"]}}
+                }
+            ]
+        }"#;
+
+        let env: Envelope<Vec<Project>> = serde_json::from_str(json).expect("should deserialize");
+
+        match env {
+            Envelope::Success { data } => {
+                assert_eq!(data.len(), 1);
+                assert_eq!(data[0].id, "3tmJCSBufFhyqys8IjZJL");
+                assert_eq!(data[0].title, "tsfm");
+            }
+            Envelope::Failure { .. } => panic!("success envelope parsed as the failure variant"),
+        }
     }
 }
