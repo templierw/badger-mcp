@@ -41,29 +41,32 @@ pub struct Project {
     pub title: String,
 }
 
+#[derive(Clone, Debug)]
 pub struct SpClient {
-    client: reqwest::blocking::Client,
+    client: reqwest::Client,
     token: String,
 }
 
 impl SpClient {
     pub fn new(token: String) -> Self {
         SpClient {
-            client: reqwest::blocking::Client::builder()
+            client: reqwest::Client::builder()
                 .no_proxy()
                 .build()
                 .expect("Failed to build HTTP client"),
             token,
         }
     }
-    pub fn fetch_tasks(&self) -> Result<Vec<Task>, String> {
+    pub async fn fetch_tasks(&self) -> Result<Vec<Task>, String> {
         let body = self
             .client
             .get("http://127.0.0.1:3876/tasks")
             .header("Authorization", format!("Bearer {}", self.token))
             .send()
+            .await
             .map_err(|e| e.to_string())?
             .text()
+            .await
             .map_err(|e| e.to_string())?;
 
         let tasks: Envelope<Vec<Task>> = serde_json::from_str(&body).map_err(|e| e.to_string())?;
@@ -74,14 +77,16 @@ impl SpClient {
         }
     }
 
-    pub fn fetch_projects(&self) -> Result<Vec<Project>, String> {
+    pub async fn fetch_projects(&self) -> Result<Vec<Project>, String> {
         let body = self
             .client
             .get("http://127.0.0.1:3876/projects")
             .header("Authorization", format!("Bearer {}", self.token))
             .send()
+            .await
             .map_err(|e| e.to_string())?
             .text()
+            .await
             .map_err(|e| e.to_string())?;
 
         let projects: Envelope<Vec<Project>> =
