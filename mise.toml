@@ -19,9 +19,3 @@ depends = ["test", "lint"]
 [tasks.build]
 description = "debug build"
 run = "cargo build"
-
-[tasks.release]
-description = "optimized build"
-run = "cargo build --release"
-sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
-outputs = ["target/release/badger-rmcp.exe"]
