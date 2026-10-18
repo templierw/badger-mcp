@@ -28,6 +28,7 @@ where
 #[derive(serde::Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
+    pub id: String,
     pub title: String,
     #[serde(default, deserialize_with = "zero_as_none")]
     pub time_estimate: Option<u64>,
@@ -101,7 +102,8 @@ impl SpClient {
 
 fn sp_connection_error(error: reqwest::Error) -> String {
     if error.is_connect() {
-        "SP server unreachable".to_string()
+        "Super Productivity is not reachable at 127.0.0.1:3876. Is the app running with its local REST API enabled?"
+            .to_string()
     } else {
         error.to_string()
     }
@@ -137,7 +139,7 @@ mod tests {
     }
 
     #[test]
-    fn task_reads_the_three_exposed_fields() {
+    fn task_reads_the_exposed_fields() {
         let json = r#"{
             "id": "abc123",
             "title": "TSFM - Cross Stream Review",
@@ -149,6 +151,7 @@ mod tests {
 
         let task: Task = serde_json::from_str(json).expect("should deserialize");
 
+        assert_eq!(task.id, "abc123");
         assert_eq!(task.title, "TSFM - Cross Stream Review");
         assert_eq!(task.time_estimate, Some(3600000));
         assert_eq!(task.project_id, "proj_xyz");
@@ -159,8 +162,8 @@ mod tests {
         let json = r#"{
             "ok": true,
             "data": [
-                {"title":"bdd-pr","timeEstimate":1800000,"projectId":"proj_abc"},
-                {"title":"triage inbox","projectId":"proj_abc"}
+                {"id":"t1","title":"bdd-pr","timeEstimate":1800000,"projectId":"proj_abc"},
+                {"id":"t2","title":"triage inbox","projectId":"proj_abc"}
             ]
         }"#;
 
@@ -178,7 +181,7 @@ mod tests {
 
     #[test]
     fn a_zero_time_estimate_means_no_estimate() {
-        let json = r#"{"title":"badger","timeEstimate":0,"projectId":"proj_abc"}"#;
+        let json = r#"{"id":"t3","title":"badger","timeEstimate":0,"projectId":"proj_abc"}"#;
 
         let task: Task = serde_json::from_str(json).expect("should deserialize");
 
