@@ -64,10 +64,10 @@ impl SpClient {
             .header("Authorization", format!("Bearer {}", self.token))
             .send()
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(sp_connection_error)?
             .text()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(sp_connection_error)?;
 
         let tasks: Envelope<Vec<Task>> = serde_json::from_str(&body).map_err(|e| e.to_string())?;
 
@@ -84,10 +84,10 @@ impl SpClient {
             .header("Authorization", format!("Bearer {}", self.token))
             .send()
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(sp_connection_error)?
             .text()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(sp_connection_error)?;
 
         let projects: Envelope<Vec<Project>> =
             serde_json::from_str(&body).map_err(|e| e.to_string())?;
@@ -96,6 +96,14 @@ impl SpClient {
             Envelope::Success { data } => Ok(data),
             Envelope::Failure { error } => Err(format!("{}: {}", error.code, error.message)),
         }
+    }
+}
+
+fn sp_connection_error(error: reqwest::Error) -> String {
+    if error.is_connect() {
+        "SP server unreachable".to_string()
+    } else {
+        error.to_string()
     }
 }
 
