@@ -1,0 +1,27 @@
+[tools]
+jq = "latest"
+
+[env]
+'_'.file = { path = ".env.local" }
+
+[tasks.test]
+description = "run the unit tests"
+run = "cargo test"
+
+[tasks.lint]
+description = "clippy over all targets"
+run = "cargo clippy --all-targets"
+
+[tasks.check]
+description = "tests + lint"
+depends = ["test", "lint"]
+
+[tasks.build]
+description = "debug build"
+run = "cargo build"
+
+[tasks.release]
+description = "optimized build"
+run = "cargo build --release"
+sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
+outputs = ["target/release/badger-rmcp.exe"]
